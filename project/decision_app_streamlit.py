@@ -15,6 +15,7 @@ class Triangle:
     a: float; b: float; c: float
     def centroid(self): return (self.a + self.b + self.c) / 3.0
 
+
 LINGUISTIC_SCALE = {
     "VL": Trapezoid(0.0, 0.0, 0.05, 0.2),
     "L":  Triangle(0.05, 0.2, 0.35),
@@ -32,18 +33,19 @@ def fuzzy_weighted_average(traps, weights):
         if isinstance(t, Triangle):
             agg_a += t.a * w
             agg_b += t.b * w
-            agg_c += t.c * w
+            agg_c += t.b * w  # c = b
             agg_d += t.c * w
         else:
             agg_a += t.a * w
             agg_b += t.b * w
-            agg_c += t.c * w
+            agg_c += t.b * w  # c = b
             agg_d += t.d * w
     return Trapezoid(agg_a, agg_b, agg_c, agg_d)
 
 def defuzz_pess(tr): return tr.a
 def defuzz_opt(tr): return tr.d
 def defuzz_neut(tr): return tr.centroid()
+
 
 def plot_term(term, name="Term", color="blue"):
     plt.figure(figsize=(4, 2))
@@ -77,6 +79,7 @@ def plot_all_terms(terms_dict):
     st.sidebar.pyplot(plt.gcf())
     plt.close()
 
+
 st.title("Aggregation of Trapezoidal and Triangular Linguistic Terms")
 
 uploaded = st.file_uploader("Upload CSV with ratings", type=["csv"])
@@ -96,6 +99,7 @@ else:
     df_ratings = pd.DataFrame(data, index=crits).T
 
 st.dataframe(df_ratings)
+
 
 st.sidebar.header("Manage Criteria Weights")
 
@@ -122,6 +126,7 @@ ws = list(weights.values())
 norm_ws = [w/sum(ws) for w in ws] if sum(ws)>0 else [1/len(ws)]*len(ws)
 st.sidebar.write("Normalized weights:", dict(zip(weights.keys(), [round(v,3) for v in norm_ws])))
 
+
 st.sidebar.header("Manage Linguistic Terms")
 
 term_to_remove = st.sidebar.selectbox("Select term to delete", ["None"] + list(LINGUISTIC_SCALE.keys()))
@@ -146,6 +151,7 @@ for term, shape in list(LINGUISTIC_SCALE.items()):
 
 plot_all_terms(LINGUISTIC_SCALE)
 
+
 st.subheader("Intermediate Calculations")
 
 intermediate_data = []
@@ -155,9 +161,9 @@ for alt in df_ratings.index:
     traps = [LINGUISTIC_SCALE[df_ratings.loc[alt, c]] for c in criteria if c in df_ratings.columns]
     for c, t, w in zip(criteria, traps, norm_ws[:len(traps)]):
         if isinstance(t, Triangle):
-            a, b, c_, d = t.a, t.b, t.c, t.c
+            a, b, c_, d = t.a, t.b, t.b, t.c  # c = b
         else:
-            a, b, c_, d = t.a, t.b, t.c, t.d
+            a, b, c_, d = t.a, t.b, t.b, t.d  # c = b
         intermediate_data.append({
             "Alternative": alt,
             "Criterion": c,
