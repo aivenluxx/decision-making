@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import math
 
-st.set_page_config(page_title="Реалізація Fuzzy TOPSIS (з CSV)", layout="wide")
+st.set_page_config(page_title="Реалізація Fuzzy TOPSIS", layout="wide")
 
 SCALE_VALUES = {
     "Level 1": (1, 1, 3),
@@ -51,10 +51,8 @@ def distance_vertex(t1, t2):
     return math.sqrt((1/3) * ((t1[0]-t2[0])**2 + (t1[1]-t2[1])**2 + (t1[2]-t2[2])**2))
 
 st.title("Реалізація Fuzzy TOPSIS")
-st.markdown("""
-Цей застосунок імплементує метод **Fuzzy TOPSIS** для багатокритеріального прийняття рішень.
-Ви можете ввести дані вручну або завантажити CSV файли.
-""")
+st.markdown("""Цей застосунок імплементує метод **Fuzzy TOPSIS** для багатокритеріального прийняття рішень.
+Ви можете ввести дані вручну або завантажити CSV файли.""")
 
 with st.sidebar:
     st.header("⚙️ Конфігурація")
@@ -78,27 +76,32 @@ uploaded_weights = st.file_uploader("Завантажити ваги (CSV)", typ
 if uploaded_weights is not None:
     try:
         df_weights_input = pd.read_csv(uploaded_weights)
+        
         if df_weights_input.shape[1] > num_criteria: 
-             df_weights_input = df_weights_input.iloc[:, 1:]
+            df_weights_input = df_weights_input.iloc[:, 1:]
         
         if df_weights_input.shape != (num_experts, num_criteria):
-             st.warning(f"Розмір завантаженого файлу ({df_weights_input.shape}) не співпадає з налаштуваннями ({num_experts}x{num_criteria}). Буде використано лише частину даних або додано пусті.")
-             df_weights_input = df_weights_input.iloc[:num_experts, :num_criteria]
+            st.warning(f"Розмір файлу ваг ({df_weights_input.shape}) не співпадає з налаштуваннями ({num_experts}x{num_criteria}). Дані буде адаптовано.")
+            target_df = pd.DataFrame(index=range(num_experts), columns=range(num_criteria))
+            copy_rows = min(df_weights_input.shape[0], num_experts)
+            copy_cols = min(df_weights_input.shape[1], num_criteria)
+            target_df.iloc[:copy_rows, :copy_cols] = df_weights_input.iloc[:copy_rows, :copy_cols].values
+            df_weights_input = target_df
         
         df_weights_input.columns = crit_names
         df_weights_input.index = [f"Експерт {i+1}" for i in range(num_experts)]
         st.success("Ваги успішно завантажено!")
+        edited_weights = df_weights_input 
     except Exception as e:
         st.error(f"Помилка читання CSV ваг: {e}")
-        df_weights_input = pd.DataFrame(index=[f"Експерт {i+1}" for i in range(num_experts)], columns=crit_names)
+        edited_weights = pd.DataFrame(index=[f"Експерт {i+1}" for i in range(num_experts)], columns=crit_names)
 else:
     df_weights_input = pd.DataFrame(
         index=[f"Експерт {i+1}" for i in range(num_experts)],
         columns=crit_names
     )
-
-weight_config = {col: st.column_config.SelectboxColumn(col, options=list(CRITERIA_SCALE.keys()), required=True) for col in crit_names}
-edited_weights = st.data_editor(df_weights_input, column_config=weight_config, use_container_width=True, key="weights_editor")
+    weight_config = {col: st.column_config.SelectboxColumn(col, options=list(CRITERIA_SCALE.keys()), required=True) for col in crit_names}
+    edited_weights = st.data_editor(df_weights_input, column_config=weight_config, use_container_width=True, key="weights_editor")
 
 
 st.subheader("B. Оцінка альтернатив")
@@ -107,7 +110,7 @@ st.markdown("Оцініть у порівнянні одну альтернат�
 
 uploaded_ratings = st.file_uploader("Завантажити оцінки (CSV)", type=["csv"], help="Формат колонок: 'Expert', 'Alternative', 'C1', 'C2'...")
 
-expert_inputs_data = {}
+expert_inputs = {}
 
 if uploaded_ratings is not None:
     try:
@@ -115,63 +118,64 @@ if uploaded_ratings is not None:
         if 'Expert' not in df_uploaded.columns or 'Alternative' not in df_uploaded.columns:
             st.error("CSV файл оцінок повинен містити колонки 'Expert' та 'Alternative'.")
         else:
-            cols_data = df_uploaded.columns[2:]
-            if len(cols_data) != num_criteria:
-                 st.warning("Кількість критеріїв у файлі не співпадає з налаштуваннями.")
-            
             for i in range(num_experts):
-                expert_label = f"Експерт {i+1}"
-                
                 start_row = i * num_alternatives
                 end_row = start_row + num_alternatives
                 
                 if end_row <= len(df_uploaded):
-                    subset = df_uploaded.iloc[start_row:end_row].copy()
-                    subset.index = alt_names 
-                    subset_vals = subset.iloc[:, 2:2+num_criteria]
-                    subset_vals.columns = crit_names
-                    expert_inputs_data[i] = subset_vals
+                    subset = df_uploaded.iloc[start_row:end_row]
+                    df_alt_input = subset.iloc[:, 2:2+num_criteria].copy()
+
+                    if df_alt_input.shape != (num_alternatives, num_criteria):
+                        st.warning(f"Розмір даних для Експерта {i+1} ({df_alt_input.shape}) не співпадає з налаштуваннями ({num_alternatives}x{num_criteria}). Дані буде адаптовано.")
+                        target_df = pd.DataFrame(index=range(num_alternatives), columns=range(num_criteria))
+                        copy_rows = min(df_alt_input.shape[0], num_alternatives)
+                        copy_cols = min(df_alt_input.shape[1], num_criteria)
+                        target_df.iloc[:copy_rows, :copy_cols] = df_alt_input.iloc[:copy_rows, :copy_cols].values
+                        df_alt_input = target_df
+
+                    df_alt_input.columns = crit_names
+                    df_alt_input.index = alt_names
+                    expert_inputs[i] = df_alt_input 
                 else:
-                    expert_inputs_data[i] = None
+                    expert_inputs[i] = pd.DataFrame(index=alt_names, columns=crit_names)
+            
             st.success("Оцінки успішно завантажено!")
 
     except Exception as e:
         st.error(f"Помилка читання CSV оцінок: {e}")
-
-expert_inputs = {}
-tabs = st.tabs([f"Експерт {i+1}" for i in range(num_experts)])
-
-for i, tab in enumerate(tabs):
-    with tab:
-        st.write(f"**Рейтинг експерта {i+1}:**")
-        
-        if i in expert_inputs_data and expert_inputs_data[i] is not None:
-            df_alt_input = expert_inputs_data[i]
-        else:
+else:
+    tabs = st.tabs([f"Експерт {i+1}" for i in range(num_experts)])
+    for i, tab in enumerate(tabs):
+        with tab:
+            st.write(f"**Рейтинг експерта {i+1}:**")
+            
             df_alt_input = pd.DataFrame(
                 index=alt_names,
                 columns=crit_names
             )
+                
+            alt_config = {col: st.column_config.SelectboxColumn(col, options=list(ALT_SCALE.keys()), required=True) for col in crit_names}
             
-        alt_config = {col: st.column_config.SelectboxColumn(col, options=list(ALT_SCALE.keys()), required=True) for col in crit_names}
-        
-        expert_inputs[i] = st.data_editor(df_alt_input, column_config=alt_config, use_container_width=True, key=f"exp_{i}_editor")
-
-
+            expert_inputs[i] = st.data_editor(df_alt_input, column_config=alt_config, use_container_width=True, key=f"exp_{i}_editor")
 
 if st.button("🚀 Розрахувати оцінку Fuzzy TOPSIS"):
     
     if edited_weights.isnull().values.any():
-        st.error("Будь ласка, заповніть всі ваги критеріїв.")
+        st.error("Будь ласка, заповніть або завантажте всі ваги критеріїв.")
         st.stop()
 
+    all_experts_filled = True
     for i in range(num_experts):
-        if expert_inputs[i].isnull().values.any():
-            st.error(f"Будь ласка, заповніть оцінки для Експерта {i+1}.")
-            st.stop()
+        if i not in expert_inputs or expert_inputs[i].isnull().values.any():
+            st.error(f"Будь ласка, заповніть або завантажте оцінки для Експерта {i+1}.")
+            all_experts_filled = False
+    
+    if not all_experts_filled:
+        st.stop()
+
 
     try:
-
         agg_weights = {} 
         
         for col in crit_names:
@@ -191,7 +195,7 @@ if st.button("🚀 Розрахувати оцінку Fuzzy TOPSIS"):
                     val_f = get_fuzzy_val(val_str, ALT_SCALE)
                     sum_f = fuzzy_add(sum_f, val_f)
                 agg_matrix[(alt, crit)] = fuzzy_div_scalar(sum_f, num_experts)
-       
+        
         norm_matrix = {}
         
         for crit in crit_names:
@@ -213,6 +217,11 @@ if st.button("🚀 Розрахувати оцінку Fuzzy TOPSIS"):
                 r = norm_matrix[(alt, crit)]
                 w = agg_weights[crit]
                 weighted_matrix[(alt, crit)] = fuzzy_mul(r, w)
+
+        df_weighted_display = pd.DataFrame(index=alt_names, columns=crit_names, dtype=object)
+        for alt in alt_names:
+            for crit in crit_names:
+                df_weighted_display.loc[alt, crit] = weighted_matrix[(alt, crit)]
 
         fpis = {} 
         fnis = {} 
@@ -251,7 +260,7 @@ if st.button("🚀 Розрахувати оцінку Fuzzy TOPSIS"):
                 "D- (Відстань до найгіршого)": round(d_minus, 4),
                 "Коєфіцієнт близькості": round(cc, 4)
             })
-      
+    
         st.markdown("---")
         st.header("Результати")
         
@@ -264,14 +273,17 @@ if st.button("🚀 Розрахувати оцінку Fuzzy TOPSIS"):
         st.dataframe(df_results, use_container_width=True)
 
         with st.expander("Показати детальні розрахункові матриці"):
-            st.write("**Агреговані ваги (Fuzzy):**", agg_weights)
+            st.write("**Агреговані ваги (Fuzzy):**")
+            st.json(agg_weights)
             
-            st.write(f"**Взважені нормалізовані матриці (Приклад - {alt_names[0]}):**")
-            first_alt = alt_names[0]
+            st.write("**Взважена нормалізована матриця (Fuzzy):**")
+            st.dataframe(df_weighted_display.style.format(lambda x: f"({x[0]:.2f}, {x[1]:.2f}, {x[2]:.2f})"), use_container_width=True)
             
-            display_matrix = {str(k[1]): v for k, v in weighted_matrix.items() if k[0] == first_alt}
+            st.write("**FPIS (Fuzzy Positive Ideal Solution):**")
+            st.json(fpis)
             
-            st.write(display_matrix)
+            st.write("**FNIS (Fuzzy Negative Ideal Solution):**")
+            st.json(fnis)
 
     except Exception as e:
         st.error(f"Під час розрахунків сталася помилка: {e}")
