@@ -8,12 +8,8 @@ import torch.nn as nn
 import torch.optim as optim
 import time
 
-
-ROOT_DIR = r'C:\Users\User\Desktop\Dataset 1.0' 
-
+ROOT_DIR = r'C:\Users\loltr\OneDrive\Desktop\Dataset 1.0' 
 CLASS_FOLDERS = ['Deserts', 'Forest Cover', 'Mountains'] 
-
-
 BATCH_SIZE = 4
 LEARNING_RATE = 0.0001
 EPOCHS = 20
@@ -22,7 +18,6 @@ NUM_CLASSES = len(CLASS_FOLDERS)
 
 class TerrainFolderDataset(Dataset):
     def __init__(self, root_split_dir, transform=None):
-
         self.transform = transform
         self.images_root = os.path.join(root_split_dir, 'images')
         
@@ -49,8 +44,14 @@ class TerrainFolderDataset(Dataset):
     def __getitem__(self, idx):
         img_path, class_id = self.samples[idx]
         
-        image = Image.open(img_path).convert("RGB")
-        
+
+        try:
+            image = Image.open(img_path).convert("RGB")
+        except Exception as e:
+            print(f"Помилка відкриття файлу {img_path}: {e}")
+
+            image = Image.new('RGB', (IMG_SIZE, IMG_SIZE))
+
         if self.transform:
             image = self.transform(image)
         
@@ -69,14 +70,22 @@ def get_model(num_classes):
 def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
     running_loss = 0.0
+    
     for images, masks in loader:
-        images, masks = images.to(device), masks.to(device)
+       
+        images, masks = images.to(device, non_blocking=True), masks.to(device, non_blocking=True)
+        
         optimizer.zero_grad()
+        
         outputs = model(images)
+ 
         loss = criterion(outputs['out'], masks) + 0.5 * criterion(outputs['aux'], masks)
+        
         loss.backward()
         optimizer.step()
+        
         running_loss += loss.item()
+        
     return running_loss / len(loader)
 
 def validate(model, loader, criterion, device):
@@ -84,15 +93,24 @@ def validate(model, loader, criterion, device):
     running_loss = 0.0
     with torch.no_grad():
         for images, masks in loader:
-            images, masks = images.to(device), masks.to(device)
+            images, masks = images.to(device, non_blocking=True), masks.to(device, non_blocking=True)
+            
             outputs = model(images)
             loss = criterion(outputs['out'], masks)
             running_loss += loss.item()
     return running_loss / len(loader)
 
 def main():
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Пристрій: {device}")
+
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        print(f"✅ Знайдено GPU: {torch.cuda.get_device_name(0)}")
+        print(f"   VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        # Оптимізація для фіксованого розміру зображень
+        torch.backends.cudnn.benchmark = True
+    else:
+        device = torch.device('cpu')
+        print("⚠️ GPU не знайдено. Навчання буде повільним на CPU.")
 
     transforms_common = transforms.Compose([
         transforms.Resize((IMG_SIZE, IMG_SIZE)),
@@ -104,8 +122,7 @@ def main():
     val_dir = os.path.join(ROOT_DIR, 'validation') 
     test_dir = os.path.join(ROOT_DIR, 'test')
 
-    print(f"Шукаємо дані в: {ROOT_DIR}")
-    print(f"Класи (папки): {CLASS_FOLDERS}")
+    print(f"\nШукаємо дані в: {ROOT_DIR}")
     
     try:
         train_dataset = TerrainFolderDataset(train_dir, transform=transforms_common)
@@ -118,12 +135,16 @@ def main():
     print(f"Знайдено зображень -> Train: {len(train_dataset)}, Validation: {len(val_dataset)}, Test: {len(test_dataset)}")
 
     if len(train_dataset) == 0:
-        print("Помилка: Тренувальний датасет порожній. Перевірте назви папок у змінній CLASS_FOLDERS!")
+        print("Помилка: Тренувальний датасет порожній.")
         return
-
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    num_workers = 2 if os.name == 'nt' else 4 
+    
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, 
+                              num_workers=num_workers, pin_memory=torch.cuda.is_available())
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, 
+                            num_workers=num_workers, pin_memory=torch.cuda.is_available())
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, 
+                             num_workers=num_workers, pin_memory=torch.cuda.is_available())
 
     model = get_model(NUM_CLASSES).to(device)
     criterion = nn.CrossEntropyLoss()
@@ -134,17 +155,21 @@ def main():
 
     print("\n--- Початок навчання ---")
     for epoch in range(EPOCHS):
+        ep_start = time.time()
+        
         train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
         val_loss = validate(model, val_loader, criterion, device)
         
-        print(f"Epoch {epoch+1}/{EPOCHS} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+        ep_duration = time.time() - ep_start
+        print(f"Epoch {epoch+1}/{EPOCHS} | Time: {ep_duration:.0f}s | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), 'best_terrain_model.pth')
-            print("  --> Збережено кращу модель")
+            print("  --> ⭐ Збережено кращу модель")
 
-    print(f"\nЧас навчання: {(time.time() - start_time)//60:.0f} хв.")
+    total_time = (time.time() - start_time) / 60
+    print(f"\nЗагальний час навчання: {total_time:.1f} хв.")
 
     print("\n--- Фінальний тест ---")
     model.load_state_dict(torch.load('best_terrain_model.pth'))
