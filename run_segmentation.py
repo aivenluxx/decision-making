@@ -1,0 +1,155 @@
+import torch
+import os
+import numpy as np
+from torchvision import models, transforms
+from torch.utils.data import Dataset, DataLoader
+from PIL import Image
+import torch.nn as nn
+import torch.optim as optim
+import time
+
+
+ROOT_DIR = r'C:\Users\User\Desktop\Dataset 1.0' 
+
+CLASS_FOLDERS = ['Deserts', 'Forest Cover', 'Mountains'] 
+
+
+BATCH_SIZE = 4
+LEARNING_RATE = 0.0001
+EPOCHS = 20
+IMG_SIZE = 480
+NUM_CLASSES = len(CLASS_FOLDERS)
+
+class TerrainFolderDataset(Dataset):
+    def __init__(self, root_split_dir, transform=None):
+
+        self.transform = transform
+        self.images_root = os.path.join(root_split_dir, 'images')
+        
+        if not os.path.exists(self.images_root):
+             raise FileNotFoundError(f"Папка images не знайдена в {root_split_dir}")
+
+        self.samples = [] 
+
+        for class_idx, class_name in enumerate(CLASS_FOLDERS):
+            class_dir = os.path.join(self.images_root, class_name)
+            
+            if not os.path.isdir(class_dir):
+                print(f"УВАГА: Папка класу '{class_name}' не знайдена в {self.images_root}. Пропускаємо.")
+                continue
+            
+            for fname in os.listdir(class_dir):
+                if fname.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
+                    full_path = os.path.join(class_dir, fname)
+                    self.samples.append((full_path, class_idx))
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        img_path, class_id = self.samples[idx]
+        
+        image = Image.open(img_path).convert("RGB")
+        
+        if self.transform:
+            image = self.transform(image)
+        
+        mask_np = np.full((IMG_SIZE, IMG_SIZE), class_id, dtype=np.int64)
+        mask_tensor = torch.as_tensor(mask_np, dtype=torch.long)
+        
+        return image, mask_tensor
+
+def get_model(num_classes):
+    print(f"Завантаження DeepLabV3+ (MobileNetV3) для {num_classes} класів...")
+    model = models.segmentation.deeplabv3_mobilenet_v3_large(weights='DEFAULT')
+    model.classifier[4] = nn.Conv2d(256, num_classes, kernel_size=(1, 1))
+    model.aux_classifier[4] = nn.Conv2d(10, num_classes, kernel_size=(1, 1))
+    return model
+
+def train_one_epoch(model, loader, criterion, optimizer, device):
+    model.train()
+    running_loss = 0.0
+    for images, masks in loader:
+        images, masks = images.to(device), masks.to(device)
+        optimizer.zero_grad()
+        outputs = model(images)
+        loss = criterion(outputs['out'], masks) + 0.5 * criterion(outputs['aux'], masks)
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item()
+    return running_loss / len(loader)
+
+def validate(model, loader, criterion, device):
+    model.eval()
+    running_loss = 0.0
+    with torch.no_grad():
+        for images, masks in loader:
+            images, masks = images.to(device), masks.to(device)
+            outputs = model(images)
+            loss = criterion(outputs['out'], masks)
+            running_loss += loss.item()
+    return running_loss / len(loader)
+
+def main():
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Пристрій: {device}")
+
+    transforms_common = transforms.Compose([
+        transforms.Resize((IMG_SIZE, IMG_SIZE)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+    train_dir = os.path.join(ROOT_DIR, 'train')
+    val_dir = os.path.join(ROOT_DIR, 'validation') 
+    test_dir = os.path.join(ROOT_DIR, 'test')
+
+    print(f"Шукаємо дані в: {ROOT_DIR}")
+    print(f"Класи (папки): {CLASS_FOLDERS}")
+    
+    try:
+        train_dataset = TerrainFolderDataset(train_dir, transform=transforms_common)
+        val_dataset = TerrainFolderDataset(val_dir, transform=transforms_common)
+        test_dataset = TerrainFolderDataset(test_dir, transform=transforms_common)
+    except FileNotFoundError as e:
+        print(f"\nКРИТИЧНА ПОМИЛКА: {e}")
+        return
+
+    print(f"Знайдено зображень -> Train: {len(train_dataset)}, Validation: {len(val_dataset)}, Test: {len(test_dataset)}")
+
+    if len(train_dataset) == 0:
+        print("Помилка: Тренувальний датасет порожній. Перевірте назви папок у змінній CLASS_FOLDERS!")
+        return
+
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+
+    model = get_model(NUM_CLASSES).to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    best_val_loss = float('inf')
+    start_time = time.time()
+
+    print("\n--- Початок навчання ---")
+    for epoch in range(EPOCHS):
+        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        val_loss = validate(model, val_loader, criterion, device)
+        
+        print(f"Epoch {epoch+1}/{EPOCHS} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), 'best_terrain_model.pth')
+            print("  --> Збережено кращу модель")
+
+    print(f"\nЧас навчання: {(time.time() - start_time)//60:.0f} хв.")
+
+    print("\n--- Фінальний тест ---")
+    model.load_state_dict(torch.load('best_terrain_model.pth'))
+    test_loss = validate(model, test_loader, criterion, device)
+    print(f"Test Loss: {test_loss:.4f}")
+
+if __name__ == "__main__":
+    main()

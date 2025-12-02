@@ -10,11 +10,11 @@ st.sidebar.header("1.Setting of model")
 
 num_alternatives = st.sidebar.number_input(
     "Quanitity of alternatives", 
-    min_value=6, value=6, step=1
+    min_value=2, value=6, step=1
 )
 num_criteria = st.sidebar.number_input(
     "Quantity of criterions", 
-    min_value=7, value=7, step=1
+    min_value=2, value=7, step=1
 )
 
 st.sidebar.info(f"Created configuration: {num_alternatives} alternatives, {num_criteria} criterions.")
@@ -34,7 +34,9 @@ def run_topsis():
     st.subheader("Decision Matrix (X)")
     st.write("Enter value for each alternative for each criterion:")
     
-    default_data = np.random.randint(1, 10, size=(num_alternatives, num_criteria))
+    # --- ЗМІНЕНО ТУТ ---
+    # Замість випадкових чисел ініціалізуємо нулями (або можна використовувати np.nan для пустих клітинок, але це потребує обережності при обчисленнях)
+    default_data = np.zeros((num_alternatives, num_criteria))
     df_input = pd.DataFrame(default_data, index=alt_names, columns=crit_names)
     
     edited_df = st.data_editor(df_input, use_container_width=True)
@@ -73,13 +75,25 @@ def run_topsis():
     if st.button("Calculate TOPSIS"):
         
         try:
+            # Отримуємо дані з редактора
             matrix = edited_df.values.astype(float)
+            
+            # Перевірка на нульові значення (ділення на нуль)
+            if np.all(matrix == 0):
+                st.error("Matrix contains only zeros. Please enter valid data.")
+                return
+
             weights = edited_params["Weight (w)"].values
             types = edited_params["Type"].values
             
             m, n = matrix.shape
             
+            # Розрахунок дільників для нормалізації
             divisors = np.sqrt((matrix**2).sum(axis=0))
+            
+            # Уникаємо ділення на нуль, якщо стовпець містить тільки нулі
+            divisors[divisors == 0] = 1 
+            
             normalized_matrix = matrix / divisors
             
             weighted_matrix = normalized_matrix * weights
@@ -101,7 +115,11 @@ def run_topsis():
             dist_pos = np.sqrt(((weighted_matrix - ideal_best)**2).sum(axis=1))
             dist_neg = np.sqrt(((weighted_matrix - ideal_worst)**2).sum(axis=1))
             
-            closeness = dist_neg / (dist_pos + dist_neg)
+            # Обробка випадку, коли dist_pos + dist_neg = 0 (уникнення ділення на нуль)
+            denom = dist_pos + dist_neg
+            closeness = np.zeros_like(denom)
+            mask = denom != 0
+            closeness[mask] = dist_neg[mask] / denom[mask]
             
             results_df = pd.DataFrame({
                 "Alternative": alt_names,
