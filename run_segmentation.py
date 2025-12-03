@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 import time
 
-ROOT_DIR = r'C:\Users\loltr\OneDrive\Desktop\Dataset 1.0' 
+ROOT_DIR = r'C:\Users\User\Desktop\Dataset 1.0' 
 CLASS_FOLDERS = ['Deserts', 'Forest Cover', 'Mountains'] 
 BATCH_SIZE = 4
 LEARNING_RATE = 0.0001
@@ -106,7 +106,6 @@ def main():
         device = torch.device('cuda')
         print(f"✅ Знайдено GPU: {torch.cuda.get_device_name(0)}")
         print(f"   VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
-        # Оптимізація для фіксованого розміру зображень
         torch.backends.cudnn.benchmark = True
     else:
         device = torch.device('cpu')
