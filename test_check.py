@@ -15,7 +15,6 @@ IMG_SIZE = 480
 NUM_CLASSES = len(CLASS_FOLDERS)
 MODEL_PATH = 'best_terrain_model.pth'
 
-# --- 1. Клас датасету (Виправлений) ---
 class TerrainFolderDataset(Dataset):
     def __init__(self, root_split_dir, transform=None):
         self.transform = transform
@@ -51,40 +50,32 @@ class TerrainFolderDataset(Dataset):
         if self.transform:
             image = self.transform(image)
         
-        # Створюємо маску (вся картинка = один клас)
         mask_np = np.full((IMG_SIZE, IMG_SIZE), class_id, dtype=np.int64)
         mask_tensor = torch.as_tensor(mask_np, dtype=torch.long)
         
-        # Повертаємо: ТензорЗображення, ТензорМаски, РядокШляху
-        # Ми НЕ повертаємо об'єкт Image, щоб не ламати DataLoader
         return image, mask_tensor, img_path
 
-# --- 2. Модель (Виправлено aux_loss=True) ---
 def get_model(num_classes):
-    # ВАЖЛИВО: aux_loss=True створює шари aux_classifier, щоб вони співпадали зі збереженими вагами
+
     model = models.segmentation.deeplabv3_mobilenet_v3_large(weights=None, aux_loss=True)
     
     model.classifier[4] = nn.Conv2d(256, num_classes, kernel_size=(1, 1))
     model.aux_classifier[4] = nn.Conv2d(10, num_classes, kernel_size=(1, 1))
     return model
 
-# --- 3. Візуалізація ---
 def visualize_prediction(image_pil, true_mask, pred_mask, img_path):
     plt.figure(figsize=(12, 5))
     
-    # Оригінал
     plt.subplot(1, 3, 1)
     plt.imshow(image_pil)
     plt.title(f"Image: {os.path.basename(img_path)}")
     plt.axis('off')
 
-    # Істина
     plt.subplot(1, 3, 2)
     plt.imshow(true_mask, cmap='viridis', vmin=0, vmax=NUM_CLASSES-1)
     plt.title(f"True: {CLASS_FOLDERS[true_mask[0,0]]}") 
     plt.axis('off')
 
-    # Прогноз (беремо мажоритарний клас)
     values, counts = np.unique(pred_mask, return_counts=True)
     if len(counts) > 0:
         majority_class_idx = values[np.argmax(counts)]
@@ -100,12 +91,10 @@ def visualize_prediction(image_pil, true_mask, pred_mask, img_path):
     plt.tight_layout()
     plt.show()
 
-# --- 4. Головна функція тестування ---
 def evaluate():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Пристрій: {device}")
 
-    # Завантаження моделі
     print(f"Завантаження ваг з {MODEL_PATH}...")
     model = get_model(NUM_CLASSES).to(device)
     
@@ -122,7 +111,6 @@ def evaluate():
     
     model.eval()
 
-    # Дані
     test_dir = os.path.join(ROOT_DIR, 'test')
     transforms_val = transforms.Compose([
         transforms.Resize((IMG_SIZE, IMG_SIZE)),
@@ -136,7 +124,6 @@ def evaluate():
         print(e)
         return
 
-    # batch_size=1 зручно для детальної перевірки кожного фото
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     print(f"Починаємо тестування на {len(test_dataset)} зображеннях...")
@@ -145,7 +132,7 @@ def evaluate():
     correct_pixels = 0
     correct_images = 0
     
-    visualize_count = 3  # Скільки картинок показати
+    visualize_count = 3  
     shown = 0
 
     with torch.no_grad():
@@ -153,37 +140,28 @@ def evaluate():
             image = image.to(device)
             mask = mask.to(device)
 
-            # Отримуємо вихід моделі
             output = model(image)['out']
-            pred_mask = torch.argmax(output, dim=1) # [1, H, W]
+            pred_mask = torch.argmax(output, dim=1) 
 
-            # --- Метрики ---
-            # 1. Pixel Accuracy
             correct_pixels += (pred_mask == mask).sum().item()
             total_pixels += mask.numel()
 
-            # 2. Image Accuracy (Класифікація сцени)
-            # Визначаємо, який клас переважає на масці
             pred_class = torch.mode(pred_mask.view(-1))[0].item()
-            true_class = mask[0, 0, 0].item() # У нас вся маска одного кольору
+            true_class = mask[0, 0, 0].item() 
             
             if pred_class == true_class:
                 correct_images += 1
 
-            # --- Візуалізація ---
             if shown < visualize_count:
-                # Перетворюємо в numpy для matplotlib
                 mask_np = mask.cpu().squeeze().numpy()
                 pred_np = pred_mask.cpu().squeeze().numpy()
                 
-                # Завантажуємо оригінал окремо, щоб показати гарну картинку
                 current_path = img_path_tuple[0]
                 pil_img = Image.open(current_path).convert("RGB").resize((IMG_SIZE, IMG_SIZE))
                 
                 visualize_prediction(pil_img, mask_np, pred_np, current_path)
                 shown += 1
 
-    # Фінальний розрахунок
     pixel_acc = 100 * correct_pixels / total_pixels if total_pixels > 0 else 0
     image_acc = 100 * correct_images / len(test_dataset) if len(test_dataset) > 0 else 0
 
